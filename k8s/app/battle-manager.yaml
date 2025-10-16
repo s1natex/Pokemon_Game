@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: battle-manager
+  namespace: app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: battle-manager
+  template:
+    metadata:
+      labels:
+        app: battle-manager
+    spec:
+      serviceAccountName: app-sa
+      containers:
+      - name: battle-manager
+        image: s1natex/pokemon_game:battle-manager-initial # ci updates image tag here
+        ports:
+        - containerPort: 8084
+        envFrom:
+        - configMapRef:
+            name: app-config
+        - secretRef:
+            name: app-secrets
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8084
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8084
+          initialDelaySeconds: 20
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: battle-manager
+  namespace: app
+spec:
+  selector:
+    app: battle-manager
+  ports:
+  - port: 8084
+    targetPort: 8084
+    name: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: battle-manager
+  namespace: app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: battle-manager
+  minReplicas: 2
+  maxReplicas: 15
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70

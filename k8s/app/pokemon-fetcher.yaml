@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pokemon-fetcher
+  namespace: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pokemon-fetcher
+  template:
+    metadata:
+      labels:
+        app: pokemon-fetcher
+    spec:
+      serviceAccountName: app-sa
+      containers:
+      - name: pokemon-fetcher
+        image: s1natex/pokemon_game:pokemon-fetcher-initial # ci updates image tag here
+        ports:
+        - containerPort: 8083
+        envFrom:
+        - configMapRef:
+            name: app-config
+        - secretRef:
+            name: app-secrets
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8083
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8083
+          initialDelaySeconds: 20
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pokemon-fetcher
+  namespace: app
+spec:
+  selector:
+    app: pokemon-fetcher
+  ports:
+  - port: 8083
+    targetPort: 8083
+    name: http
