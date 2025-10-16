@@ -56,6 +56,44 @@ resource "aws_subnet" "private" {
   }
 }
 
+# force-ensure cluster discovery tags on public subnets
+resource "aws_ec2_tag" "public_cluster_tag" {
+  for_each = aws_subnet.public
+
+  resource_id = each.value.id
+
+  key   = "kubernetes.io/cluster/${var.cluster_name}"
+  value = "shared"
+}
+
+resource "aws_ec2_tag" "public_role_tag" {
+  for_each = aws_subnet.public
+
+  resource_id = each.value.id
+
+  key   = "kubernetes.io/role/elb"
+  value = "1"
+}
+
+# force-ensure cluster discovery tags on private subnets
+resource "aws_ec2_tag" "private_cluster_tag" {
+  for_each = aws_subnet.private
+
+  resource_id = each.value.id
+
+  key   = "kubernetes.io/cluster/${var.cluster_name}"
+  value = "shared"
+}
+
+resource "aws_ec2_tag" "private_role_tag" {
+  for_each = aws_subnet.private
+
+  resource_id = each.value.id
+
+  key   = "kubernetes.io/role/internal-elb"
+  value = "1"
+}
+
 resource "aws_eip" "nat" {
   for_each = toset(["0", "1", "2"])
 

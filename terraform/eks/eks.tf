@@ -89,3 +89,27 @@ resource "aws_eks_fargate_profile" "system" {
   ]
 }
 
+resource "aws_eks_fargate_profile" "coredns" {
+  cluster_name           = aws_eks_cluster.this.name
+  fargate_profile_name   = "coredns"
+  pod_execution_role_arn = aws_iam_role.fargate_pod_exec.arn
+
+  subnet_ids = [
+    for _, s in aws_subnet.private : s.id
+  ]
+
+  selector {
+    namespace = "kube-system"
+    labels = {
+      k8s-app = "kube-dns"
+    }
+  }
+
+  tags = {
+    Name = "${var.project}-fp-coredns"
+  }
+
+  depends_on = [
+    aws_eks_cluster.this
+  ]
+}

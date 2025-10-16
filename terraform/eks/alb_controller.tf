@@ -63,6 +63,8 @@ resource "helm_release" "alb_controller" {
     })
   ]
 
+  wait    = true
+  atomic  = true
   timeout = 600
 
   depends_on = [
