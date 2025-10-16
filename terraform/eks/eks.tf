@@ -66,3 +66,26 @@ resource "aws_eks_fargate_profile" "app" {
     aws_eks_cluster.this
   ]
 }
+
+resource "aws_eks_fargate_profile" "system" {
+  cluster_name           = aws_eks_cluster.this.name
+  fargate_profile_name   = "system"
+  pod_execution_role_arn = aws_iam_role.fargate_pod_exec.arn
+
+  subnet_ids = [
+    for _, s in aws_subnet.private : s.id
+  ]
+
+  selector {
+    namespace = "kube-system"
+  }
+
+  tags = {
+    Name = "${var.project}-fp-system"
+  }
+
+  depends_on = [
+    aws_eks_cluster.this
+  ]
+}
+

@@ -63,8 +63,11 @@ resource "helm_release" "alb_controller" {
     })
   ]
 
+  timeout = 600
+
   depends_on = [
     aws_eks_cluster.this,
-    aws_iam_role_policy_attachment.alb_attach
+    aws_iam_role_policy_attachment.alb_attach,
+    aws_eks_fargate_profile.system
   ]
 }
