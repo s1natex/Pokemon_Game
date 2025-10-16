@@ -16,6 +16,14 @@ spec:
       serviceAccountName: app-sa
       containers:
       - name: trainer-manager
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        # critical required for HPA and Fargate sizing
         image: s1natex/pokemon_game:trainer-manager-initial # ci updates image tag here
         ports:
         - containerPort: 8085

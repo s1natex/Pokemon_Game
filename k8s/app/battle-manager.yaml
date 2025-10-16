@@ -16,6 +16,14 @@ spec:
       serviceAccountName: app-sa
       containers:
       - name: battle-manager
+        resources:
+          requests:
+            cpu: "300m"
+            memory: "384Mi"
+          limits:
+            cpu: "800m"
+            memory: "768Mi"
+        # critical required for HPA and Fargate sizing
         image: s1natex/pokemon_game:battle-manager-initial # ci updates image tag here
         ports:
         - containerPort: 8084

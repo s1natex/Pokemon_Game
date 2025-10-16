@@ -16,6 +16,14 @@ spec:
       serviceAccountName: app-sa
       containers:
       - name: pokemon-fetcher
+        resources:
+          requests:
+            cpu: "150m"
+            memory: "192Mi"
+          limits:
+            cpu: "400m"
+            memory: "384Mi"
+        # critical required for HPA and Fargate sizing
         image: s1natex/pokemon_game:pokemon-fetcher-initial # ci updates image tag here
         ports:
         - containerPort: 8083
