@@ -31,3 +31,8 @@ variable "log_retention_days" {
   description = "cloudwatch log retention in days"
   default     = 14
 }
+
+variable "alb_arn_suffix" {
+  type        = string
+  description = "ALB ARN suffix, e.g. app/xxx/yyy"
+}
