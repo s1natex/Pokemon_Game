@@ -25,6 +25,8 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: compute tag
         id: tag
@@ -37,15 +39,26 @@ jobs:
         run: |
           BEFORE="${{ github.event.before }}"
           if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            BEFORE=$(git rev-list --max-parents=0 HEAD | tail -n 1)
+            if git rev-parse HEAD^ >/dev/null 2>&1; then
+              BEFORE=$(git rev-parse HEAD^)
+            else
+              BEFORE=$(git rev-list --max-parents=0 HEAD | tail -n 1)
+            fi
           fi
+          echo "BEFORE=$BEFORE"
+          echo "AFTER=$GITHUB_SHA"
+
           files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- app || true)
+          echo "Changed files:"
+          echo "$files"
+
           svcs=""
           for s in frontend pokemon-manager scheduler pokemon-fetcher battle-manager trainer-manager; do
             if echo "$files" | grep -q "^app/$s/"; then
               svcs="$svcs $s"
             fi
           done
+
           if [ -z "$svcs" ]; then
             echo "matrix={\"service\":[]}" >> $GITHUB_OUTPUT
             echo "any_changed=false" >> $GITHUB_OUTPUT
@@ -53,6 +66,7 @@ jobs:
             arr=$(printf '%s\n' $svcs | jq -R . | jq -s '{service: .}')
             echo "matrix=$arr" >> $GITHUB_OUTPUT
             echo "any_changed=true" >> $GITHUB_OUTPUT
+            echo "Detected services: $svcs"
           fi
 
       - name: set up python
@@ -94,6 +108,7 @@ jobs:
       - name: compose up
         run: |
           docker compose -f app/docker-compose.yml up -d
+          # services can take ~2 minutes to become healthy per your note
           sleep 120
 
       - name: runtime tests
@@ -118,6 +133,7 @@ jobs:
         run: |
           for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
             img="${IMAGE_PREFIX}-${s}:${{ steps.tag.outputs.tag }}"
+            echo "building $img"
             docker build -t "$img" "app/$s"
           done
 
@@ -126,6 +142,7 @@ jobs:
         run: |
           for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
             img="${IMAGE_PREFIX}-${s}:${{ steps.tag.outputs.tag }}"
+            echo "scanning $img"
             trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed "$img"
           done
 
@@ -134,6 +151,7 @@ jobs:
         run: |
           for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
             img="${IMAGE_PREFIX}-${s}:${{ steps.tag.outputs.tag }}"
+            echo "pushing $img"
             docker push "$img"
           done
 
@@ -143,6 +161,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: set tag
         run: echo "TAG=${{ needs.test-and-build.outputs.tag }}" >> $GITHUB_ENV
@@ -153,19 +173,22 @@ jobs:
           curl -L -s https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64 -o yq
           sudo install -m 0755 yq /usr/local/bin/yq
 
-      - name: update images
+      - name: update images for changed services
         env:
           IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+          MATRIX_JSON: ${{ needs.test-and-build.outputs.matrix }}
         run: |
-          for s in frontend pokemon-manager scheduler pokemon-fetcher battle-manager trainer-manager; do
-            if git diff --name-only ${{ github.event.before }} $GITHUB_SHA -- app/$s | grep -q .; then
-              file="k8s/app/${s}.yaml"
-              repo="${IMAGE_PREFIX}-${s}"
-              if [ -f "$file" ]; then
-                yq -i '
-                  (.spec.template.spec.containers[] | select(.name=="'"$s"'") | .image) = "'"$repo"':'"$TAG"'"
-                ' "$file"
-              fi
+          changed=$(jq -r '.service[]?' <<< "$MATRIX_JSON")
+          for s in $changed; do
+            file="k8s/app/${s}.yaml"
+            repo="${IMAGE_PREFIX}-${s}"
+            if [ -f "$file" ]; then
+              echo "patching $file -> $repo:$TAG"
+              yq -i '
+                (.spec.template.spec.containers[] | select(.name=="'"$s"'") | .image) = "'"$repo"':'"$TAG"'"
+              ' "$file"
+            else
+              echo "skip missing $file"
             fi
           done
 
