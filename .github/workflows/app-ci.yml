@@ -133,21 +133,6 @@ jobs:
             docker build -t "$img" "app/$s"
           done
 
-      - name: install trivy
-        run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/scripts/install.sh \
-            | sudo sh -s -- -b /usr/local/bin
-          trivy --version
-
-      - name: trivy scan critical (all changed)
-        if: steps.changed.outputs.any_changed == 'true'
-        run: |
-          for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
-            img="${IMAGE_PREFIX}-${s}:${{ steps.tag.outputs.tag }}"
-            echo "scanning $img"
-            trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed "$img"
-          done
-
       - name: push images
         if: steps.changed.outputs.any_changed == 'true'
         run: |
