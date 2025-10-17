@@ -60,19 +60,27 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: install test deps
+      - name: install test tools and deps
         run: |
           python -m pip install --upgrade pip
-          pip install pytest bandit
+          pip install pytest bandit fastapi uvicorn httpx requests
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+          YQ_VERSION=v4.44.3
+          curl -L -s https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64 -o yq
+          sudo install -m 0755 yq /usr/local/bin/yq
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/scripts/install.sh | sudo sh -s -- -b /usr/local/bin
 
       - name: unit tests
+        env:
+          PYTHONPATH: app/frontend:app/pokemon-manager:app/scheduler:app/pokemon-fetcher:app/battle-manager:app/trainer-manager
         run: |
           pytest -q app/tests/unit/*.py
 
       - name: compose up
         run: |
           docker compose -f app/docker-compose.yml up -d
-          sleep 25
+          sleep 120
 
       - name: runtime tests
         run: |
@@ -99,18 +107,7 @@ jobs:
             docker build -t "$img" "app/$s"
           done
 
-      - name: trivy scan critical
-        if: steps.changed.outputs.any_changed == 'true'
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: "image"
-          severity: "CRITICAL"
-          exit-code: "1"
-          ignore-unfixed: true
-          image-ref: ${{ env.IMAGE_PREFIX }}-${{ fromJson(steps.changed.outputs.matrix).service[0] }}:${{ steps.tag.outputs.tag }}
-        continue-on-error: false
-
-      - name: trivy scan all changed
+      - name: trivy scan critical (all changed)
         if: steps.changed.outputs.any_changed == 'true'
         run: |
           for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
@@ -136,7 +133,15 @@ jobs:
       - name: set tag
         run: echo "TAG=${{ needs.test-and-build.outputs.tag }}" >> $GITHUB_ENV
 
+      - name: install yq
+        run: |
+          YQ_VERSION=v4.44.3
+          curl -L -s https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64 -o yq
+          sudo install -m 0755 yq /usr/local/bin/yq
+
       - name: update images
+        env:
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
         run: |
           for s in frontend pokemon-manager scheduler pokemon-fetcher battle-manager trainer-manager; do
             if git diff --name-only ${{ github.event.before }} $GITHUB_SHA -- app/$s | grep -q .; then
