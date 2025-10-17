@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compute timestamps & short SHA
+      - name: Meta (timestamp + short SHA)
         id: meta
         run: |
           TS=$(date +'%d%m%Y-%H%M')
@@ -36,40 +36,37 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install test deps (minimal)
+      - name: Install minimal deps
         run: |
           set -euxo pipefail
           python -m pip install -U pip
-          # Unit tests: only python stdlib + pytest; Runtime tests use requests.
+          # tests: unit need pytest, runtime needs requests; SAST needs bandit
           pip install pytest requests bandit
-          # Tools for later steps
+          # tooling for later steps
           sudo apt-get update -y
-          sudo apt-get install -y curl gnupg jq
-          # yq (for manifest updates)
+          sudo apt-get install -y curl jq
+          # yq for manifest updates
           YQ_VERSION=v4.44.3
-          curl -sL https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64 -o yq
+          curl -sL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" -o yq
           sudo install -m 0755 yq /usr/local/bin/yq
-          # Trivy via official APT repo (reliable on GH runners)
-          sudo mkdir -p /etc/apt/keyrings
-          curl -fsSL https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /etc/apt/keyrings/trivy.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb stable main" | sudo tee /etc/apt/sources.list.d/trivy.list >/dev/null
-          sudo apt-get update -y
-          sudo apt-get install -y trivy
+          # Trivy via GitHub release tarball (no apt repo)
+          TRIVY_VERSION=0.55.1
+          curl -fsSL -o trivy.tgz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          sudo tar -xzf trivy.tgz trivy
+          sudo mv trivy /usr/local/bin/trivy
           trivy --version
 
       - name: Unit tests
-        env:
-          # keep imports simple like local runs
-          PYTHONPATH: app
         run: |
           set -euxo pipefail
+          # mirror local: just run pytest; no PYTHONPATH hacks
           pytest -q app/tests/unit
 
       - name: Compose up (runtime)
         run: |
           set -euxo pipefail
           docker compose -f app/docker-compose.yml up -d
-          # your runtime tests do their own wait/health via requests
+          # your runtime tests do their own health waits
 
       - name: Runtime tests
         run: |
@@ -80,17 +77,13 @@ jobs:
             echo "no runtime tests found"
           fi
 
-      - name: SAST (Bandit - high+ fails)
-        run: |
-          set -euxo pipefail
-          bandit -r app -lll
-
+      # Build first so Trivy can scan the images
       - name: Docker login
         run: |
           set -euxo pipefail
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 
-      - name: Build & tag images
+      - name: Build images (service-name in tag)
         run: |
           set -euxo pipefail
           for s in $SERVICES; do
@@ -100,7 +93,7 @@ jobs:
             docker build -t "$IMG" "app/$s"
           done
 
-      - name: Trivy scan (CRITICAL, fail)
+      - name: Trivy scan (CRITICAL -> fail)
         run: |
           set -euxo pipefail
           for s in $SERVICES; do
@@ -109,6 +102,11 @@ jobs:
             echo "Scanning $IMG"
             trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed "$IMG"
           done
+
+      - name: SAST (Bandit high+ -> fail)
+        run: |
+          set -euxo pipefail
+          bandit -r app -lll
 
       - name: Push images
         run: |
