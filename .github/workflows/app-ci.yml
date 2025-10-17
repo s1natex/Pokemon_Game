@@ -26,42 +26,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: compute tag
+      - name: Compute tag
         id: tag
         run: |
           TS=$(date +'%d%m%Y-%H%M')
-          echo "tag=${TS}-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          echo "tag=${TS}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
-      - name: detect changed services
+      - name: Detect changed services
         id: changed
+        shell: bash
         run: |
+          set -euo pipefail
           BEFORE="${{ github.event.before }}"
-          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+          if [ -z "${BEFORE}" ] || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ]; then
             BEFORE=$(git rev-list --max-parents=0 HEAD | tail -n 1)
           fi
-          files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- app || true)
+          files="$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- app || true)"
+
           svcs=""
           for s in frontend pokemon-manager scheduler pokemon-fetcher battle-manager trainer-manager; do
             if echo "$files" | grep -q "^app/$s/"; then
               svcs="$svcs $s"
             fi
           done
+
           if [ -z "$svcs" ]; then
-            echo "matrix={\"service\":[]}" >> $GITHUB_OUTPUT
-            echo "any_changed=false" >> $GITHUB_OUTPUT
+            echo 'matrix={"service":[]}' >> "$GITHUB_OUTPUT"
+            echo "any_changed=false" >> "$GITHUB_OUTPUT"
           else
             arr=$(printf '%s\n' $svcs | jq -R . | jq -s '{service: .}')
-            echo "matrix=$arr" >> $GITHUB_OUTPUT
-            echo "any_changed=true" >> $GITHUB_OUTPUT
+            echo "matrix=${arr}" >> "$GITHUB_OUTPUT"
+            echo "any_changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: set up python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: install test tools and deps
+      - name: Install test tools and deps
         run: |
+          set -euxo pipefail
           python -m pip install --upgrade pip
           pip install pytest bandit fastapi uvicorn httpx requests prometheus-client
           sudo apt-get update -y
@@ -71,57 +76,104 @@ jobs:
           sudo install -m 0755 yq /usr/local/bin/yq
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/scripts/install.sh | sudo sh -s -- -b /usr/local/bin
 
-      - name: unit tests
+      - name: Unit tests (with route debug)
         env:
-          PYTHONPATH: app/frontend:app/pokemon-manager:app/scheduler:app/pokemon-fetcher:app/battle-manager:app/trainer-manager
+          PYTHONPATH: app
         run: |
+          set -euxo pipefail
+          python - <<'PY'
+          import pathlib, importlib.util
+          from fastapi import FastAPI
+          from fastapi.routing import APIRoute
+
+          root = pathlib.Path("app")
+          # Load each service's main.py by file path to introspect routes (non-invasive)
+          svc_dirs = ["frontend","pokemon-manager","pokemon-fetcher","scheduler","battle-manager","trainer-manager"]
+
+          def load_module(p):
+            spec = importlib.util.spec_from_file_location(p.stem, str(p))
+            mod = importlib.util.module_from_spec(spec)  # type: ignore
+            assert spec and spec.loader
+            spec.loader.exec_module(mod)  # type: ignore
+            return mod
+
+          test_app = FastAPI()
+          for svc in svc_dirs:
+            mp = root / svc / "main.py"
+            if mp.exists():
+              m = load_module(mp)
+              app = getattr(m, "app", None)
+              router = getattr(m, "router", None)
+              if app:
+                for r in app.router.routes:
+                  test_app.router.routes.append(r)
+              elif router:
+                test_app.include_router(router)
+
+          paths = sorted([r.path for r in test_app.routes if isinstance(r, APIRoute)])
+          print("DEBUG collected routes:", paths)
+          PY
+
           pytest -q app/tests/unit/*.py
 
-      - name: compose up
+      - name: Compose up (runtime env)
         run: |
+          set -euxo pipefail
           docker compose -f app/docker-compose.yml up -d
+          # Give containers time to become healthy if healthchecks are present
           sleep 120
 
-      - name: runtime tests
+      - name: Runtime tests
         run: |
+          set -euxo pipefail
           if [ -d app/tests/runtime ]; then
-            pytest -q app/tests/runtime || exit 1
+            pytest -q app/tests/runtime
           else
-            echo no runtime tests found
+            echo "no runtime tests found"
           fi
 
-      - name: SAST bandit high only
+      - name: SAST bandit (high only)
         run: |
+          set -euxo pipefail
           bandit -r app -lll
 
-      - name: docker login
+      - name: Docker login
         if: steps.changed.outputs.any_changed == 'true'
         run: |
+          set -euxo pipefail
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 
-      - name: build images
+      - name: Build images (changed services only)
         if: steps.changed.outputs.any_changed == 'true'
         run: |
+          set -euxo pipefail
           for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
             img="${IMAGE_PREFIX}-${s}:${{ steps.tag.outputs.tag }}"
             docker build -t "$img" "app/$s"
           done
 
-      - name: trivy scan critical (all changed)
+      - name: Trivy scan CRITICAL (changed)
         if: steps.changed.outputs.any_changed == 'true'
         run: |
+          set -euxo pipefail
           for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
             img="${IMAGE_PREFIX}-${s}:${{ steps.tag.outputs.tag }}"
             trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed "$img"
           done
 
-      - name: push images
+      - name: Push images (changed)
         if: steps.changed.outputs.any_changed == 'true'
         run: |
+          set -euxo pipefail
           for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
             img="${IMAGE_PREFIX}-${s}:${{ steps.tag.outputs.tag }}"
             docker push "$img"
           done
+
+      - name: Compose down (always)
+        if: always()
+        run: |
+          docker compose -f app/docker-compose.yml down -v || true
 
   update-manifests:
     needs: [test-and-build]
@@ -130,21 +182,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: set tag
-        run: echo "TAG=${{ needs.test-and-build.outputs.tag }}" >> $GITHUB_ENV
+      - name: Set tag
+        run: echo "TAG=${{ needs.test-and-build.outputs.tag }}" >> "$GITHUB_ENV"
 
-      - name: install yq
+      - name: Install yq
         run: |
           YQ_VERSION=v4.44.3
           curl -L -s https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64 -o yq
           sudo install -m 0755 yq /usr/local/bin/yq
 
-      - name: update images
+      - name: Update images in manifests (only changed services)
         env:
           IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
         run: |
+          set -euxo pipefail
+          BEFORE="${{ github.event.before }}"
+          if [ -z "${BEFORE}" ] || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ]; then
+            BEFORE=$(git rev-list --max-parents=0 HEAD | tail -n 1)
+          fi
+
           for s in frontend pokemon-manager scheduler pokemon-fetcher battle-manager trainer-manager; do
-            if git diff --name-only ${{ github.event.before }} $GITHUB_SHA -- app/$s | grep -q .; then
+            if git diff --name-only "$BEFORE" "$GITHUB_SHA" -- "app/$s" | grep -q .; then
               file="k8s/app/${s}.yaml"
               repo="${IMAGE_PREFIX}-${s}"
               if [ -f "$file" ]; then
@@ -155,10 +213,11 @@ jobs:
             fi
           done
 
-      - name: commit manifests
+      - name: Commit manifests
         run: |
+          set -euxo pipefail
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add k8s/app/*.yaml
-          git commit -m "[skip ci] update images $TAG" || echo nothing to commit
+          git add k8s/app/*.yaml || true
+          git commit -m "[skip ci] update images $TAG" || echo "nothing to commit"
           git push origin HEAD:main
