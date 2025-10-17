@@ -15,6 +15,7 @@ cmds = [
     ["kubectl","apply","-f","k8s/app/frontend.yaml"],
     ["kubectl","apply","-f","k8s/app/ingress-alb.yaml"],
     ["kubectl", "-n", "app", "delete", "ingress", "app-ingress"],
+    ["kubectl","apply","-f","k8s/argocd/"],
     ["echo", "==================================="],
     ["echo", "Deployment completed successfully"],
     ["echo", "==================================="],
