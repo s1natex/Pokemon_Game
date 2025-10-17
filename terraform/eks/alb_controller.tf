@@ -70,6 +70,34 @@ resource "helm_release" "alb_controller" {
   depends_on = [
     aws_eks_cluster.this,
     aws_iam_role_policy_attachment.alb_attach,
-    aws_eks_fargate_profile.system
+    aws_eks_fargate_profile.system,
+    aws_eks_fargate_profile.kube_system_alb
+  ]
+}
+
+resource "aws_eks_fargate_profile" "kube_system_alb" {
+  cluster_name           = aws_eks_cluster.this.name
+  fargate_profile_name   = "kube-system-alb-controller"
+  pod_execution_role_arn = aws_iam_role.fargate_pod_exec.arn
+
+  subnet_ids = [
+    aws_subnet.private["0"].id,
+    aws_subnet.private["1"].id,
+    aws_subnet.private["2"].id
+  ]
+
+  selector {
+    namespace = "kube-system"
+    labels = {
+      "app.kubernetes.io/name" = "aws-load-balancer-controller"
+    }
+  }
+
+  tags = {
+    Name = "pokemon-game-kube-system-alb-fargate"
+  }
+
+  depends_on = [
+    aws_eks_cluster.this
   ]
 }
