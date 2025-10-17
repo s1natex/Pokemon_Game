@@ -45,29 +45,25 @@ jobs:
               BEFORE=$(git rev-list --max-parents=0 HEAD | tail -n 1)
             fi
           fi
-          echo "BEFORE=$BEFORE"
-          echo "AFTER=$GITHUB_SHA"
-
+      
           files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- app || true)
-          echo "Changed files:"
-          echo "$files"
-
           svcs=""
           for s in frontend pokemon-manager scheduler pokemon-fetcher battle-manager trainer-manager; do
             if echo "$files" | grep -q "^app/$s/"; then
               svcs="$svcs $s"
             fi
           done
-
+      
           if [ -z "$svcs" ]; then
-            echo "matrix={\"service\":[]}" >> $GITHUB_OUTPUT
-            echo "any_changed=false" >> $GITHUB_OUTPUT
+            echo 'matrix={"service":[]}' >> "$GITHUB_OUTPUT"
+            echo "any_changed=false" >> "$GITHUB_OUTPUT"
           else
-            arr=$(printf '%s\n' $svcs | jq -R . | jq -s '{service: .}')
-            echo "matrix=$arr" >> $GITHUB_OUTPUT
-            echo "any_changed=true" >> $GITHUB_OUTPUT
+            arr=$(printf '%s\n' $svcs | jq -R . | jq -c -s '{service: .}')
+            echo "matrix=$arr" >> "$GITHUB_OUTPUT"
+            echo "any_changed=true" >> "$GITHUB_OUTPUT"
             echo "Detected services: $svcs"
           fi
+
 
       - name: set up python
         uses: actions/setup-python@v5
