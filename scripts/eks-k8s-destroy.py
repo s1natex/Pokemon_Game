@@ -6,6 +6,9 @@ cmds = [
     ["kubectl","delete","-f","k8s/app/ingress-alb.yaml","--ignore-not-found=true"],
     ["kubectl","delete","-f","k8s/app/","--ignore-not-found=true"],
     ["kubectl","delete","namespace","app","--ignore-not-found=true"],
+    ["echo", "==================================="],
+    ["echo", "Deployment destroyed successfully"],
+    ["echo", "==================================="],
     ["kubectl", "get", "ns", "|", "grep", "app"],
     ["kubectl", "get", "pods", "-A"]
 ]

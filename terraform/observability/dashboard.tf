@@ -1,9 +1,3 @@
-locals {
-  alb_metric_dims = jsonencode({
-    LoadBalancer = "*"
-  })
-}
-
 resource "aws_cloudwatch_dashboard" "main" {
   dashboard_name = "${var.project}-observability"
   dashboard_body = <<JSON
@@ -15,13 +9,11 @@ resource "aws_cloudwatch_dashboard" "main" {
       "properties": {
         "title": "ALB RequestCount / 5xx",
         "metrics": [
-          [ "AWS/ApplicationELB", "RequestCount", ${local.alb_metric_dims} ],
-          [ ".", "HTTPCode_Target_5XX_Count", ".", { "yAxis": "right", "stat": "Sum" } ]
+          [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "*", { "stat": "Sum" } ],
+          [ "AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", "*", { "yAxis": "right", "stat": "Sum" } ]
         ],
-        "stat": "Sum",
         "period": 60,
         "region": "${var.region}",
-        "yAxis": { "left": { "label": "requests" }, "right": { "label": "5xx" } },
         "view": "timeSeries",
         "stacked": false
       }
@@ -32,9 +24,9 @@ resource "aws_cloudwatch_dashboard" "main" {
       "properties": {
         "title": "ALB TargetResponseTime p50 p90 p99",
         "metrics": [
-          [ "AWS/ApplicationELB", "TargetResponseTime", ${local.alb_metric_dims}, { "stat": "p50" } ],
-          [ ".", "TargetResponseTime", ".", { "stat": "p90" } ],
-          [ ".", "TargetResponseTime", ".", { "stat": "p99" } ]
+          [ "AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "*", { "stat": "p50" } ],
+          [ "AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "*", { "stat": "p90" } ],
+          [ "AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "*", { "stat": "p99" } ]
         ],
         "period": 60,
         "region": "${var.region}",
@@ -46,19 +38,25 @@ resource "aws_cloudwatch_dashboard" "main" {
       "x": 0, "y": 6, "width": 12, "height": 6,
       "properties": {
         "title": "Errors by service (last 1h)",
-        "query": "SOURCE '/eks/${var.project}/app' | fields @timestamp, @message, kubernetes.container_name as svc, level | filter level = 'ERROR' or @message like /ERROR/ | stats count() as errors by svc | sort errors desc",
         "region": "${var.region}",
-        "view": "table"
+        "view": "table",
+        "query": {
+          "source": ["/eks/${var.project}/app"],
+          "queryString": "fields @timestamp, @message, kubernetes.container_name as svc\\n| filter @message like /(?i)(error|exception)/\\n| stats count() as errors by svc\\n| sort errors desc"
+        }
       }
     },
     {
       "type": "log",
       "x": 12, "y": 6, "width": 12, "height": 6,
       "properties": {
-        "title": "Top routes by requests (last 1h)",
-        "query": "SOURCE '/eks/${var.project}/app' | fields @timestamp, @message, route, status | stats count() as hits by route | sort hits desc | limit 10",
+        "title": "Top HTTP paths (best-effort)",
         "region": "${var.region}",
-        "view": "table"
+        "view": "table",
+        "query": {
+          "source": ["/eks/${var.project}/app"],
+          "queryString": "parse @message /(?i)(GET|POST|PUT|DELETE) (?<path>[^ \\\"\\n]+)/\\n| filter ispresent(path)\\n| stats count() as hits by path\\n| sort hits desc\\n| limit 10"
+        }
       }
     },
     {
@@ -66,9 +64,12 @@ resource "aws_cloudwatch_dashboard" "main" {
       "x": 0, "y": 12, "width": 12, "height": 6,
       "properties": {
         "title": "Recent error log lines",
-        "query": "SOURCE '/eks/${var.project}/app' | filter @message like /ERROR|Error|exception/i | fields @timestamp, kubernetes.container_name, @message | sort @timestamp desc | limit 50",
         "region": "${var.region}",
-        "view": "table"
+        "view": "table",
+        "query": {
+          "source": ["/eks/${var.project}/app"],
+          "queryString": "filter @message like /(?i)(error|exception)/\\n| fields @timestamp, kubernetes.container_name, @message\\n| sort @timestamp desc\\n| limit 50"
+        }
       }
     },
     {
@@ -76,9 +77,12 @@ resource "aws_cloudwatch_dashboard" "main" {
       "x": 12, "y": 12, "width": 12, "height": 6,
       "properties": {
         "title": "Frontend health hits",
-        "query": "SOURCE '/eks/${var.project}/app' | filter route = '/healthz' | stats count() as health_hits by bin(1m)",
         "region": "${var.region}",
-        "view": "timeSeries"
+        "view": "timeSeries",
+        "query": {
+          "source": ["/eks/${var.project}/app"],
+          "queryString": "filter @message like /\\/healthz/\\n| stats count() as health_hits by bin(1m)"
+        }
       }
     }
   ]
