@@ -66,7 +66,7 @@ jobs:
 
       - name: unit tests
         run: |
-          pytest -q app/tests/unit
+          pytest -q app/tests/unit/*.py
 
       - name: compose up
         run: |
