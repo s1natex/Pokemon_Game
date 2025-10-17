@@ -133,6 +133,9 @@ jobs:
             docker build -t "$img" "app/$s"
           done
 
+      - name: install trivy
+        uses: aquasecurity/setup-trivy@v0.13.1
+
       - name: trivy scan critical (all changed)
         if: steps.changed.outputs.any_changed == 'true'
         run: |
