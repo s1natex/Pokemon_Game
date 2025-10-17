@@ -1,0 +1,158 @@
+name: app-ci
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "app/**"
+
+permissions:
+  contents: write
+
+env:
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+  DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+  IMAGE_PREFIX: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/pokemon_game
+  TZ: Asia/Jerusalem
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.changed.outputs.matrix }}
+      any_changed: ${{ steps.changed.outputs.any_changed }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: compute tag
+        id: tag
+        run: |
+          TS=$(date +'%d%m%Y-%H%M')
+          echo "tag=${TS}-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: detect changed services
+        id: changed
+        run: |
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            BEFORE=$(git rev-list --max-parents=0 HEAD | tail -n 1)
+          fi
+          files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- app || true)
+          svcs=""
+          for s in frontend pokemon-manager scheduler pokemon-fetcher battle-manager trainer-manager; do
+            if echo "$files" | grep -q "^app/$s/"; then
+              svcs="$svcs $s"
+            fi
+          done
+          if [ -z "$svcs" ]; then
+            echo "matrix={\"service\":[]}" >> $GITHUB_OUTPUT
+            echo "any_changed=false" >> $GITHUB_OUTPUT
+          else
+            arr=$(printf '%s\n' $svcs | jq -R . | jq -s '{service: .}')
+            echo "matrix=$arr" >> $GITHUB_OUTPUT
+            echo "any_changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest bandit
+
+      - name: unit tests
+        run: |
+          pytest -q app/tests/unit
+
+      - name: compose up
+        run: |
+          docker compose -f app/docker-compose.yml up -d
+          sleep 25
+
+      - name: runtime tests
+        run: |
+          if [ -d app/tests/runtime ]; then
+            pytest -q app/tests/runtime || exit 1
+          else
+            echo no runtime tests found
+          fi
+
+      - name: SAST bandit high only
+        run: |
+          bandit -r app -lll
+
+      - name: docker login
+        if: steps.changed.outputs.any_changed == 'true'
+        run: |
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+
+      - name: build images
+        if: steps.changed.outputs.any_changed == 'true'
+        run: |
+          for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
+            img="${IMAGE_PREFIX}-${s}:${{ steps.tag.outputs.tag }}"
+            docker build -t "$img" "app/$s"
+          done
+
+      - name: trivy scan critical
+        if: steps.changed.outputs.any_changed == 'true'
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: "image"
+          severity: "CRITICAL"
+          exit-code: "1"
+          ignore-unfixed: true
+          image-ref: ${{ env.IMAGE_PREFIX }}-${{ fromJson(steps.changed.outputs.matrix).service[0] }}:${{ steps.tag.outputs.tag }}
+        continue-on-error: false
+
+      - name: trivy scan all changed
+        if: steps.changed.outputs.any_changed == 'true'
+        run: |
+          for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
+            img="${IMAGE_PREFIX}-${s}:${{ steps.tag.outputs.tag }}"
+            trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed "$img"
+          done
+
+      - name: push images
+        if: steps.changed.outputs.any_changed == 'true'
+        run: |
+          for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
+            img="${IMAGE_PREFIX}-${s}:${{ steps.tag.outputs.tag }}"
+            docker push "$img"
+          done
+
+  update-manifests:
+    needs: [test-and-build]
+    if: needs.test-and-build.outputs.any_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: set tag
+        run: echo "TAG=${{ needs.test-and-build.outputs.tag }}" >> $GITHUB_ENV
+
+      - name: update images
+        run: |
+          for s in frontend pokemon-manager scheduler pokemon-fetcher battle-manager trainer-manager; do
+            if git diff --name-only ${{ github.event.before }} $GITHUB_SHA -- app/$s | grep -q .; then
+              file="k8s/app/${s}.yaml"
+              repo="${IMAGE_PREFIX}-${s}"
+              if [ -f "$file" ]; then
+                yq -i '
+                  (.spec.template.spec.containers[] | select(.name=="'"$s"'") | .image) = "'"$repo"':'"$TAG"'"
+                ' "$file"
+              fi
+            fi
+          done
+
+      - name: commit manifests
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add k8s/app/*.yaml
+          git commit -m "[skip ci] update images $TAG" || echo nothing to commit
+          git push origin HEAD:main
