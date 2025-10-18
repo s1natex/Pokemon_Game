@@ -6,7 +6,7 @@
 
 ## Project Diagram:
 
-## [Go to Screenshots](./docs/screenshots.md)
+### [Go to Screenshots](./docs/screenshots.md)
 
 ## Setup Instructions:
 
