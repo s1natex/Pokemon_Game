@@ -24,7 +24,7 @@ spec:
               cpu: "200m"
               memory: "256Mi"
           # critical required for HPA and Fargate sizing
-          image: docker.io/s1natex/pokemon_game-frontend:18102025-0043-f0c5d91 # ci image tag changed here
+          image: docker.io/s1natex/pokemon_game:frontend-18102025-1557-9af5ede # ci image tag changed here
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
