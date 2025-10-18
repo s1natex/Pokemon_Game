@@ -13,11 +13,10 @@ permissions:
   contents: read
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
-  STATE_BUCKET: ${{ vars.STATE_BUCKET }}
-  LOCK_TABLE: ${{ vars.LOCK_TABLE }}
+  AWS_REGION: eu-central-1
   PROJECT: "pokemon-game"
   CLUSTER_NAME: "pokemon-game-eks"
+  LOCK_TABLE: "pokemon-game-tf-locks"
 
 jobs:
   deploy:
@@ -26,106 +25,126 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS creds (OIDC)
+      - name: assert role arn present
+        run: |
+          if [ -z "${{ vars.TERRAFORM_CD_ROLE_ARN }}" ]; then
+            echo "TERRAFORM_CD_ROLE_ARN repo variable is required"
+            exit 1
+          fi
+
+      - name: configure aws creds
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.TERRAFORM_CD_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
+      - name: resolve state bucket
+        id: bucket
+        run: |
+          if [ -n "${{ vars.STATE_BUCKET }}" ]; then
+            echo "bucket=${{ vars.STATE_BUCKET }}" >> $GITHUB_OUTPUT
+          else
+            B=$(aws s3api list-buckets --query 'Buckets[].Name' --output text | tr '\t' '\n' | grep '^pokemon-game-tfstate-' | head -n1 || true)
+            if [ -z "$B" ]; then
+              echo "No STATE_BUCKET var and no pokemon-game-tfstate-* found"
+              exit 1
+            fi
+            echo "bucket=$B" >> $GITHUB_OUTPUT
+          fi
+
+      - name: setup terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Install kubectl
+      - name: install kubectl
         uses: azure/setup-kubectl@v4
         with:
           version: "v1.30.0"
 
-      - name: Install Terrascan
+      - name: install terrascan
         run: |
           VER="1.19.1"
           curl -L -o terrascan.tar.gz "https://github.com/tenable/terrascan/releases/download/v${VER}/terrascan_Linux_x86_64.tar.gz"
           tar -xzf terrascan.tar.gz terrascan && sudo mv terrascan /usr/local/bin/terrascan
 
-      # ---- EKS ----
-      - name: Terraform init (eks)
+      # EKS
+      - name: tf init eks
         working-directory: terraform/eks
         run: |
           terraform init -reconfigure \
-            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="bucket=${{ steps.bucket.outputs.bucket }}" \
             -backend-config="key=eks/terraform.tfstate" \
-            -backend-config="region=${AWS_REGION}" \
-            -backend-config="dynamodb_table=${LOCK_TABLE}"
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ env.LOCK_TABLE }}"
 
-      - name: Write tfvars (eks)
+      - name: write tfvars eks
         working-directory: terraform/eks
         run: |
           cat > terraform.tfvars <<EOF
-          region       = "${AWS_REGION}"
-          project      = "${PROJECT}"
-          state_bucket = "${STATE_BUCKET}"
-          lock_table   = "${LOCK_TABLE}"
-          cluster_name = "${CLUSTER_NAME}"
+          region       = "${{ env.AWS_REGION }}"
+          project      = "${{ env.PROJECT }}"
+          state_bucket = "${{ steps.bucket.outputs.bucket }}"
+          lock_table   = "${{ env.LOCK_TABLE }}"
+          cluster_name = "${{ env.CLUSTER_NAME }}"
           EOF
 
-      - name: Terrascan (eks)
+      - name: terrascan eks
         working-directory: terraform/eks
         run: terrascan scan -i terraform -d .
         continue-on-error: true
 
-      - name: Validate (eks)
+      - name: validate eks
         working-directory: terraform/eks
         run: terraform validate
 
-      - name: Apply (eks)
+      - name: apply eks
         working-directory: terraform/eks
         run: terraform apply -auto-approve
 
-      # ---- OBSERVABILITY ----
-      - name: Terraform init (observability)
+      # OBSERVABILITY
+      - name: tf init observability
         working-directory: terraform/observability
         run: |
           terraform init -reconfigure \
-            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="bucket=${{ steps.bucket.outputs.bucket }}" \
             -backend-config="key=observability/terraform.tfstate" \
-            -backend-config="region=${AWS_REGION}" \
-            -backend-config="dynamodb_table=${LOCK_TABLE}"
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ env.LOCK_TABLE }}"
 
-      - name: Discover ALB ARN suffix
+      - name: discover alb arn suffix
         id: alb
         run: |
-          ALB=$(aws elbv2 describe-load-balancers --region "${AWS_REGION}" \
+          ALB=$(aws elbv2 describe-load-balancers --region "${{ env.AWS_REGION }}" \
             --query 'LoadBalancers[?Type==`application`].LoadBalancerArn' --output text | head -n1)
           SFX="${ALB#*:loadbalancer/}"
           echo "suffix=${SFX}" >> "$GITHUB_OUTPUT"
 
-      - name: Write tfvars (observability)
+      - name: write tfvars observability
         working-directory: terraform/observability
         run: |
           cat > terraform.tfvars <<EOF
-          region          = "${AWS_REGION}"
-          project         = "${PROJECT}"
-          state_bucket    = "${STATE_BUCKET}"
-          lock_table      = "${LOCK_TABLE}"
-          cluster_name    = "${CLUSTER_NAME}"
+          region          = "${{ env.AWS_REGION }}"
+          project         = "${{ env.PROJECT }}"
+          state_bucket    = "${{ steps.bucket.outputs.bucket }}"
+          lock_table      = "${{ env.LOCK_TABLE }}"
+          cluster_name    = "${{ env.CLUSTER_NAME }}"
           alb_arn_suffix  = "${{ steps.alb.outputs.suffix }}"
           EOF
 
-      - name: Terrascan (observability)
+      - name: terrascan observability
         working-directory: terraform/observability
         run: terrascan scan -i terraform -d .
         continue-on-error: true
 
-      - name: Validate (observability)
+      - name: validate observability
         working-directory: terraform/observability
         run: terraform validate
 
-      - name: Apply (observability)
+      - name: apply observability
         working-directory: terraform/observability
         run: terraform apply -auto-approve
 
-      # ---- CLOUDWATCH PATCH ----
-      - name: Update kubeconfig
-        run: aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${AWS_REGION}" --alias "${CLUSTER_NAME}"
+      - name: update kubeconfig
+        run: aws eks update-kubeconfig --name "${{ env.CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}" --alias "${{ env.CLUSTER_NAME }}"
 
-      - name: CloudWatch patch
+      - name: cloudwatch patch
         run: python3 ./scripts/cloudwatch-patch.py
