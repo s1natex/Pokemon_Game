@@ -129,9 +129,6 @@ jobs:
             docker build -t "$img" "app/$s"
           done
 
-      # optional trivy scan loop if you want (kept installed above)
-
-      # CHANGED: push to single repo
       - name: push images
         if: steps.changed.outputs.any_changed == 'true'
         run: |

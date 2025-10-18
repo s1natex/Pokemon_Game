@@ -15,7 +15,7 @@
 - `INFRASTRUCTURE`: Managed via Terraform with isolated modules:
   - **terraform/bootstrap**: S3 state bucket and DynamoDB lock table
   - **terraform/eks**: EKS cluster, Fargate profiles, networking
-  - **terraform/observability**: CloudWatch, X-Ray, and FluentBit logging
+  - **terraform/observability**: CloudWatch and FluentBit logging
 - `CI/CD`:
   - `app-ci`: runs on code changes under `./app/`
     - Unit & runtime tests via pytest
@@ -38,6 +38,15 @@
     - Fargate auto-provisioning for stateless workloads
     - Minimal inter-service coupling allowing independent scaling
     - Terraform modules enable easy environment replication
+    - Stress Test included to stimulate requests, events and errors
 ## Design Choices Overview:
 
+Application
+Infrastructure
+Monitoring and Logging
+CI/CD
+Scripts
+
 ## Project Diagram:
+- Note: Diagram is raw and incomplete
+![System Diagram](./docs/media/SysDiagram.drawio.png)
