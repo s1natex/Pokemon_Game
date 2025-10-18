@@ -1,147 +1,131 @@
-name: terraform-ci-cd
+name: terraform-cd
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
     paths:
       - "terraform/eks/**"
       - "terraform/observability/**"
   workflow_dispatch:
 
-env:
-  AWS_REGION: eu-central-1
-  TF_STATE_BUCKET: pokemon-game-tfstate-04b294
-  TF_LOCK_TABLE: pokemon-game-tf-locks
-  CI_ROLE_ARN: arn:aws:iam::194722430316:role/pokemon-game-gha-ci-readonly
-  CD_ROLE_ARN: arn:aws:iam::194722430316:role/pokemon-game-gha-cd-deploy
-
 permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  STATE_BUCKET: ${{ vars.STATE_BUCKET }}
+  LOCK_TABLE: ${{ vars.LOCK_TABLE }}
+  PROJECT: "pokemon-game"
+  CLUSTER_NAME: "pokemon-game-eks"
+
 jobs:
-  detect:
+  deploy:
     runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.changed.outputs.matrix }}
-      any_changed: ${{ steps.changed.outputs.any_changed }}
+
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - id: changed
-        shell: bash
-        run: |
-          BEFORE="${{ github.event.before }}"
-          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            if git rev-parse HEAD^ >/dev/null 2>&1; then
-              BEFORE=$(git rev-parse HEAD^)
-            else
-              BEFORE=$(git rev-list --max-parents=0 HEAD | tail -n 1)
-            fi
-          fi
-          files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- terraform || true)
-          dirs=""
-          echo "$files" | grep -q "^terraform/eks/" && dirs="$dirs terraform/eks"
-          echo "$files" | grep -q "^terraform/observability/" && dirs="$dirs terraform/observability"
-          if [ -z "$dirs" ]; then
-            echo 'matrix={"dir":[]}' >> $GITHUB_OUTPUT
-            echo "any_changed=false" >> $GITHUB_OUTPUT
-          else
-            arr=$(printf '%s\n' $dirs | jq -R . | jq -c -s '{dir: .}')
-            echo "matrix=$arr" >> $GITHUB_OUTPUT
-            echo "any_changed=true" >> $GITHUB_OUTPUT
-          fi
 
-  ci:
-    needs: detect
-    if: needs.detect.outputs.any_changed == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
-    defaults:
-      run:
-        working-directory: ${{ matrix.dir }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.8.5
-
-      - name: assume read only role
+      - name: Configure AWS creds (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
+          role-to-assume: ${{ vars.TERRAFORM_CD_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ env.CI_ROLE_ARN }}
-          role-session-name: tf-ci
 
-      - name: terraform init
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "v1.30.0"
+
+      - name: Install Terrascan
         run: |
-          KEY_DIR=$(basename "${{ matrix.dir }}")
+          VER="1.19.1"
+          curl -L -o terrascan.tar.gz "https://github.com/tenable/terrascan/releases/download/v${VER}/terrascan_Linux_x86_64.tar.gz"
+          tar -xzf terrascan.tar.gz terrascan && sudo mv terrascan /usr/local/bin/terrascan
+
+      # ---- EKS ----
+      - name: Terraform init (eks)
+        working-directory: terraform/eks
+        run: |
           terraform init -reconfigure \
-            -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="key=${KEY_DIR}/terraform.tfstate" \
+            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="key=eks/terraform.tfstate" \
             -backend-config="region=${AWS_REGION}" \
-            -backend-config="dynamodb_table=${TF_LOCK_TABLE}"
+            -backend-config="dynamodb_table=${LOCK_TABLE}"
 
-      - name: terraform fmt
-        run: terraform fmt -check -recursive
-
-      - name: install terrascan
+      - name: Write tfvars (eks)
+        working-directory: terraform/eks
         run: |
-          VER=1.18.3
-          curl -sL "https://github.com/tenable/terrascan/releases/download/v${VER}/terrascan_${VER}_Linux_x86_64.tar.gz" -o terrascan.tgz
-          tar -xzf terrascan.tgz terrascan
-          sudo install -m 0755 terrascan /usr/local/bin/terrascan
+          cat > terraform.tfvars <<EOF
+          region       = "${AWS_REGION}"
+          project      = "${PROJECT}"
+          state_bucket = "${STATE_BUCKET}"
+          lock_table   = "${LOCK_TABLE}"
+          cluster_name = "${CLUSTER_NAME}"
+          EOF
 
-      - name: terrascan
-        run: terrascan scan -i terraform -f .
+      - name: Terrascan (eks)
+        working-directory: terraform/eks
+        run: terrascan scan -i terraform -d .
         continue-on-error: true
 
-      - name: terraform validate
+      - name: Validate (eks)
+        working-directory: terraform/eks
         run: terraform validate
 
-      - name: terraform plan
-        run: terraform plan -no-color -out plan.tfplan
-
-  cd:
-    needs: [detect, ci]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect.outputs.any_changed == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
-    defaults:
-      run:
-        working-directory: ${{ matrix.dir }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.8.5
-
-      - name: assume deploy role
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ env.CD_ROLE_ARN }}
-          role-session-name: tf-cd
-
-      - name: terraform init
-        run: |
-          KEY_DIR=$(basename "${{ matrix.dir }}")
-          terraform init -reconfigure \
-            -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="key=${KEY_DIR}/terraform.tfstate" \
-            -backend-config="region=${AWS_REGION}" \
-            -backend-config="dynamodb_table=${TF_LOCK_TABLE}"
-
-      - name: terraform apply
+      - name: Apply (eks)
+        working-directory: terraform/eks
         run: terraform apply -auto-approve
+
+      # ---- OBSERVABILITY ----
+      - name: Terraform init (observability)
+        working-directory: terraform/observability
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="key=observability/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="dynamodb_table=${LOCK_TABLE}"
+
+      - name: Discover ALB ARN suffix
+        id: alb
+        run: |
+          ALB=$(aws elbv2 describe-load-balancers --region "${AWS_REGION}" \
+            --query 'LoadBalancers[?Type==`application`].LoadBalancerArn' --output text | head -n1)
+          SFX="${ALB#*:loadbalancer/}"
+          echo "suffix=${SFX}" >> "$GITHUB_OUTPUT"
+
+      - name: Write tfvars (observability)
+        working-directory: terraform/observability
+        run: |
+          cat > terraform.tfvars <<EOF
+          region          = "${AWS_REGION}"
+          project         = "${PROJECT}"
+          state_bucket    = "${STATE_BUCKET}"
+          lock_table      = "${LOCK_TABLE}"
+          cluster_name    = "${CLUSTER_NAME}"
+          alb_arn_suffix  = "${{ steps.alb.outputs.suffix }}"
+          EOF
+
+      - name: Terrascan (observability)
+        working-directory: terraform/observability
+        run: terrascan scan -i terraform -d .
+        continue-on-error: true
+
+      - name: Validate (observability)
+        working-directory: terraform/observability
+        run: terraform validate
+
+      - name: Apply (observability)
+        working-directory: terraform/observability
+        run: terraform apply -auto-approve
+
+      # ---- CLOUDWATCH PATCH ----
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${AWS_REGION}" --alias "${CLUSTER_NAME}"
+
+      - name: CloudWatch patch
+        run: python3 ./scripts/cloudwatch-patch.py

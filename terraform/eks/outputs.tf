@@ -13,3 +13,8 @@ output "cluster_ca" {
 output "fargate_profile_app" {
   value = aws_eks_fargate_profile.app.fargate_profile_name
 }
+
+# Test value to verify terraform cicd
+output "cluster_name_id" {
+  value = aws_eks_cluster.this.id
+}
