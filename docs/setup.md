@@ -1,14 +1,14 @@
 - #### Infrastructure is managed from local pc and app via GitHub Actions CI and in cluster ArgoCD operator
 - #### Prerequisites
-    - Python3
-    - Terraform
-    - Kubectl
-    - Git
-    - Git Bash CLI
-    - AWS-CLI
+    - `Python3`
+    - `Terraform`
+    - `Kubectl`
+    - `Git`
+    - `Git Bash CLI`
+    - `AWS-CLI`
     - AWS local pc credentials set as environment variables
-    - Docker Desktop(for local testing)
-    - Pytest(running tests locally)
+    - `Docker Desktop`(for local testing)
+    - `Pytest`(running tests locally)
     - `git clone https://github.com/s1natex/Pokemon_Game`
 # Initial Setup
 - #### Initial Bootstrap for `S3 Remote state` and `OIDC`
@@ -128,11 +128,11 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.pas
 ```
 - #### `CI/CD` Testing
     - If using fork Update `DOCKERHUB_TOKEN` and `DOCKERHUB_USERNAME` in Repository actions -> secrets
-    - Make some changes to ./app/ dir
-    - Commit and push to GitHub Repository
-    - CI will pick up run unit and runtime tests via compose, sast scan, build, tag(name-date-time-sha), push to DockerHub and commit back to Repository with [skip-ci] flag
-    - ArgoCD will detect changes (default autosync every 3 minutes) and deploy the new images to the cluster
-    - In this Project Rollbacks are possible manually via deactivating autosync and the native ArgoCD rollback feature with using Git commands
+    - Make some changes to `./app/` dir
+    - `Commit` and `push` to GitHub Repository
+    - CI will pick up run `unit` and `runtime` tests via `compose`, `sast` scan, `build`, `tag`(name-date-time-sha), `push` to DockerHub and `commit back` to Repository with `[skip-ci]` flag
+    - `ArgoCD` will detect changes (default autosync every 3 minutes) and deploy the new images to the cluster
+    - In this Project `Rollbacks` are possible manually via `deactivating autosync` and the native `ArgoCD rollback feature` with using `Git` commands
 # Clean Up
 - Destroy Monitoring build
 ```
