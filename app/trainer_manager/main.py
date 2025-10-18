@@ -48,4 +48,4 @@ def delete_trainer(tid: str):
         del TRAINERS[tid]
     return {"status": "ok"}
 
-# (test)
+# (test7)
