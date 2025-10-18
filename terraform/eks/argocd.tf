@@ -15,8 +15,8 @@ resource "kubernetes_namespace" "argocd" {
 # Fargate profile for Argo CD namespace
 ###############################################
 resource "aws_eks_fargate_profile" "argocd" {
-  cluster_name         = aws_eks_cluster.this.name
-  fargate_profile_name = "argocd"
+  cluster_name           = aws_eks_cluster.this.name
+  fargate_profile_name   = "argocd"
   pod_execution_role_arn = aws_iam_role.fargate_pod_exec.arn
 
   subnet_ids = [

@@ -10,7 +10,7 @@ on:
 
 env:
   AWS_REGION: eu-central-1
-  TF_STATE_BUCKET: pokemon-game-tfstate-d8b16b
+  TF_STATE_BUCKET: pokemon-game-tfstate-04b294
   TF_LOCK_TABLE: pokemon-game-tf-locks
   CI_ROLE_ARN: arn:aws:iam::194722430316:role/pokemon-game-gha-ci-readonly
   CD_ROLE_ARN: arn:aws:iam::194722430316:role/pokemon-game-gha-cd-deploy

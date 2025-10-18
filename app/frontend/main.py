@@ -22,7 +22,7 @@ def healthz():
 @app.get("/")
 def root():
     # body for root endpoint
-    return {"service": "frontend", "message": "pokemon mvp(test8)"}
+    return {"service": "frontend", "message": "pokemon mvp(test9)"}
 
 @app.get("/metrics")
 def metrics():
