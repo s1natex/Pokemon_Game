@@ -35,3 +35,5 @@ def fetch(job: FetchJob):
     FETCHED.labels(job.source).inc()
     # simulated payload
     return {"status": "ok", "id": job.id, "name": "unknown"}
+
+# (test)

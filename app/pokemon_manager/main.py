@@ -44,3 +44,5 @@ def delete_pokemon(pid: str):
     if pid in POKE:
         del POKE[pid]
     return {"status": "ok"}
+
+# (test)

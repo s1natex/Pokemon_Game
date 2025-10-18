@@ -13,7 +13,7 @@ permissions:
 env:
   DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
   DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-  IMAGE_PREFIX: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/pokemon_game
+  IMAGE_REPO: docker.io/s1natex/pokemon_game
   TZ: Asia/Jerusalem
 
 jobs:
@@ -25,8 +25,6 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: compute tag
         id: tag
@@ -39,13 +37,8 @@ jobs:
         run: |
           BEFORE="${{ github.event.before }}"
           if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            if git rev-parse HEAD^ >/dev/null 2>&1; then
-              BEFORE=$(git rev-parse HEAD^)
-            else
-              BEFORE=$(git rev-list --max-parents=0 HEAD | tail -n 1)
-            fi
+            BEFORE=$(git rev-list --max-parents=0 HEAD | tail -n 1)
           fi
-      
           files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- app || true)
           svcs=""
           for s in frontend pokemon-manager scheduler pokemon-fetcher battle-manager trainer-manager; do
@@ -53,7 +46,6 @@ jobs:
               svcs="$svcs $s"
             fi
           done
-      
           if [ -z "$svcs" ]; then
             echo 'matrix={"service":[]}' >> "$GITHUB_OUTPUT"
             echo "any_changed=false" >> "$GITHUB_OUTPUT"
@@ -64,48 +56,22 @@ jobs:
             echo "Detected services: $svcs"
           fi
 
-
       - name: set up python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: install test tools and deps
+      - name: install deps
         run: |
-          python -m pip install --upgrade pip
-          pip install pytest bandit fastapi uvicorn httpx requests prometheus-client
-          sudo apt-get update -y
-          sudo apt-get install -y jq
-          YQ_VERSION=v4.44.3
-          curl -L -s https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64 -o yq
-          sudo install -m 0755 yq /usr/local/bin/yq
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/scripts/install.sh | sudo sh -s -- -b /usr/local/bin
+          pip install pytest bandit
 
-      - name: unit tests per service
-        run: |
-          declare -A map=(
-            [frontend_unit.py]=app/frontend
-            [pokemon_fetcher_unit.py]=app/pokemon-fetcher
-            [pokemon_manager_unit.py]=app/pokemon-manager
-            [scheduler_unit.py]=app/scheduler
-            [battle_manager_unit.py]=app/battle-manager
-            [trainer_manager_unit.py]=app/trainer-manager
-          )
-          rc=0
-          for t in app/tests/unit/*_unit.py; do
-            f=$(basename "$t")
-            svc="${map[$f]}"
-            if [ -z "$svc" ]; then echo "no map for $f"; rc=1; continue; fi
-            echo "===> $f with PYTHONPATH=$svc"
-            PYTHONPATH="$svc" pytest -q "$t" || rc=1
-          done
-          exit $rc
+      - name: unit tests
+        run: pytest -q app/tests/unit/*.py
 
       - name: compose up
         run: |
           docker compose -f app/docker-compose.yml up -d
-          # services can take ~2 minutes to become healthy per your note
-          sleep 120
+          sleep 25
 
       - name: runtime tests
         run: |
@@ -115,21 +81,18 @@ jobs:
             echo no runtime tests found
           fi
 
-      - name: SAST bandit high only
-        run: |
-          bandit -r app -lll
+      - name: SAST bandit
+        run: bandit -r app -lll
 
       - name: docker login
         if: steps.changed.outputs.any_changed == 'true'
-        run: |
-          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+        run: echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 
       - name: build images
         if: steps.changed.outputs.any_changed == 'true'
         run: |
           for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
-            img="${IMAGE_PREFIX}-${s}:${{ steps.tag.outputs.tag }}"
-            echo "building $img"
+            img="${IMAGE_REPO}:${s}-${{ steps.tag.outputs.tag }}"
             docker build -t "$img" "app/$s"
           done
 
@@ -137,8 +100,7 @@ jobs:
         if: steps.changed.outputs.any_changed == 'true'
         run: |
           for s in $(jq -r '.service[]' <<< '${{ steps.changed.outputs.matrix }}'); do
-            img="${IMAGE_PREFIX}-${s}:${{ steps.tag.outputs.tag }}"
-            echo "pushing $img"
+            img="${IMAGE_REPO}:${s}-${{ steps.tag.outputs.tag }}"
             docker push "$img"
           done
 
@@ -148,34 +110,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: set tag
         run: echo "TAG=${{ needs.test-and-build.outputs.tag }}" >> $GITHUB_ENV
 
-      - name: install yq
+      - name: update image tags
         run: |
-          YQ_VERSION=v4.44.3
-          curl -L -s https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64 -o yq
-          sudo install -m 0755 yq /usr/local/bin/yq
-
-      - name: update images for changed services
-        env:
-          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
-          MATRIX_JSON: ${{ needs.test-and-build.outputs.matrix }}
-        run: |
-          changed=$(jq -r '.service[]?' <<< "$MATRIX_JSON")
-          for s in $changed; do
-            file="k8s/app/${s}.yaml"
-            repo="${IMAGE_PREFIX}-${s}"
-            if [ -f "$file" ]; then
-              echo "patching $file -> $repo:$TAG"
-              yq -i '
-                (.spec.template.spec.containers[] | select(.name=="'"$s"'") | .image) = "'"$repo"':'"$TAG"'"
-              ' "$file"
-            else
-              echo "skip missing $file"
+          for s in frontend pokemon-manager scheduler pokemon-fetcher battle-manager trainer-manager; do
+            if git diff --name-only ${{ github.event.before }} $GITHUB_SHA -- app/$s | grep -q .; then
+              file="k8s/app/${s}.yaml"
+              img="docker.io/s1natex/pokemon_game:${s}-${TAG}"
+              if [ -f "$file" ]; then
+                yq -i '
+                  (.spec.template.spec.containers[] | select(.name=="'"$s"'") | .image) = "'"$img"'"
+                ' "$file"
+              fi
             fi
           done
 
@@ -184,5 +133,5 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git add k8s/app/*.yaml
-          git commit -m "[skip ci] update images $TAG" || echo nothing to commit
+          git commit -m "[skip ci] update image tags $TAG" || echo nothing to commit
           git push origin HEAD:main

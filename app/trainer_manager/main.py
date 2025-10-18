@@ -47,3 +47,5 @@ def delete_trainer(tid: str):
     if tid in TRAINERS:
         del TRAINERS[tid]
     return {"status": "ok"}
+
+# (test)

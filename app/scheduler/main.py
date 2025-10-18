@@ -33,3 +33,5 @@ def schedule(job: Job):
         raise HTTPException(status_code=400, detail="invalid")
     SCHEDULED.labels(job.type).inc()
     return {"status": "accepted", "type": job.type}
+
+# (test)
