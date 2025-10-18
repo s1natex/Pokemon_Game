@@ -20,9 +20,9 @@
   - `app-ci`: runs on code changes under `./app/`
     - Unit & runtime tests via pytest
     - Security scans with Bandit (SAST)
-    - Dynamic image tagging → <service>-DDMMYYYY-HHMM-SHA
+    - Dynamic image tagging - `SERVICE_NAME-DDMMYYYY-HHMM-SHA`
     - Auto-updates Kubernetes manifests with new image tags
-- `DEPLOYMENT`: ArgoCD manages application lifecycle, syncing manifests from GitHub to Kubernetes
+  - `DEPLOYMENT`: ArgoCD manages application lifecycle, syncing manifests from GitHub to Kubernetes
 - `Observability`:
   - CloudWatch logs and metrics enabled via namespace labeling
   - Centralized metrics dashboard via Prometheus-compatible exporters
