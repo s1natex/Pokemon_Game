@@ -1,17 +1,18 @@
 - ### EKS Pods Running
 ![EKS Pods Running](./media/ekspods.png)
-- ### Simple Frontend Dummy
+- ### Frontend
 ![Frontend](./media/frontend.png)
-- ### Pod to Pod communication solution using ClusterIP
+- ### Pods using ClusterIP
 ![Pod to Pod](./media/servicesforpods.png)
-- ### Frontend as single point of entry(argocd also for mvp demo)
+- ### Frontend Ingress and Endpoint
 ![Frontend as single point of entry](./media/frontendingress.png)
 ![Frontend as single point of entry](./media/frontendendpoint.png)
-- ### Cloudwatch and Cloudwatch Logs
+- ### CloudWatch Dashboard
 ![Dashborad1](./media/cloudwatchdashboard2TOP.png)
 ![Dashboard2](./media/cloudwatchdashboard1.png)
+- ### CloudWatch Logs
 ![Logs](./media/cloudwatchlogsgroups.png)
 - ### ArgoCD Dashboard
 ![ArgoCD](./media/argocddashboard.png)
-- ### ArgoCD Dashboard auto syncing
+- ### ArgoCD Dashboard auto-syncing on change
 ![ArgoCD sync](./media/syncinprogress.png)
