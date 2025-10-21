@@ -1,26 +1,69 @@
 # DevSecOps: Pokemon Game Architecture
 [![app-ci](https://github.com/s1natex/Pokemon_Game/actions/workflows/app-ci.yml/badge.svg)](https://github.com/s1natex/Pokemon_Game/actions/workflows/app-ci.yml)
 - ### [Project Screenshots](./docs/screenshots.md)
-
-
 ## Project Overview
-
-
-
+- `Application`:
+    - Each service runs as an independent containerized Deployment with a dedicated Service and Horizontal Pod Autoscaler
+    - The frontend is exposed publicly via an Application Load Balancer
+    - Backend services remain internal in private subnets
+    - Services communicate over REST APIs through the internal VPC network
+    - The app namespace uses its own Fargate profile and service account for isolation and observability integration
+- `Infrastructure & Networking`:
+    - The infrastructure is built entirely with Terraform using a remote S3 backend and DynamoDB locking
+    - VPC spans three Availability Zones (AZ-a, AZ-b, AZ-c) with public and private subnets per AZ
+    - Public subnets host internet-facing ALBs and NAT Gateways
+    - Private subnets host EKS workloads on Fargate
+    - The EKS cluster runs add-ons like vpc-cni, kube-proxy, and coredns configured for Fargate
+    - Segment workloads by namespace (app, kube-system, argocd, observability)
+    - Public ALBs manage ingress for the frontend and ArgoCD
+- `Storage & State Management`:
+    - Terraform state is stored in an S3 bucket with versioning, encryption, and public access blocking
+    - DynamoDB table provides state locking with the LockID attribute
+    - S3 and DynamoDB resources are tagged for cost tracking
+- `IAM & Security`:
+    - IAM follows the principle of least privilege across all roles and policies
+- `ArgoCD Deployment`:
+    - ArgoCD runs inside its own namespace on Fargate
+    - Deployed via Helm with autosync enabled to monitor the main branch on GitHub
+    - A separate ALB ingress provides external access to the ArgoCD web UI
+    - The ArgoCD controller has a cluster-admin role binding limited to the argocd namespace
+- `CI Pipeline`:
+    - On commits to main, the workflow runs pytest-based unit and runtime tests, and SAST security scans using Bandit
+    - Each service is containerized and tagged dynamically (`SERVICE-DATE-TIME-SHA`), and pushed to DockerHub
+    - The workflow then commits updated image tags to the repository with a `[skip-ci]` flag triggering ArgoCD autosync for deployment
+- `Observability & Monitoring`:
+    - CloudWatch provides centralized monitoring and logging
+    - All EKS Fargate pods stream logs to CloudWatch Logs (`/eks/pokemon-game/app`) via the `fargate-logs-write` IAM policy
+    - CloudWatch dashboard visualizes ALB metrics:
+        - RequestCount
+        - TargetResponseTime 
+        - p50/p90/p99
+        - error tracking
+        - endpoint traffic
+        - health checks
+- `Scripts & Automation`: Python automation scripts manage deployment, validation, monitoring, and teardown operations
+## Improvement
+- Add AWS SNS/SQS for the event-driven layer
+- Add autoscaling metrics and CloudWatch alarms for EKS scaling behavior
+- 50,000 concurrent users needs validation
+- Add an external IdP dummy for trainer authentication(AWS Cognito)
+- Add HTTPS for ALB
+- Experiment implementing mTLS pod to pod communication with Istio
+- Create CI/CD for Terraform with Destroy Workflow
 ## Project Diagram
 ![System Diagram](./docs/media/SysDiagram.drawio.png)
+## Prerequisites
+  - `Python3`
+  - `Terraform`
+  - `Kubectl`
+  - `Git`
+  - `Git Bash`
+  - `AWS-CLI`
+  - AWS local pc credentials set as environment variables
+  - `Docker Desktop`(local testing)
+  - `Pytest`(local testing)
+  - `git clone https://github.com/s1natex/Pokemon_Game`
 ## Setup Instructions
-- ### Prerequisites
-    - `Python3`
-    - `Terraform`
-    - `Kubectl`
-    - `Git`
-    - `Git Bash`
-    - `AWS-CLI`
-    - AWS local pc credentials set as environment variables
-    - `Docker Desktop`(local testing)
-    - `Pytest`(local testing)
-    - `git clone https://github.com/s1natex/Pokemon_Game`
 - ### Bootstrap for `S3 Remote state` and `OIDC`
 ```
 # Bootstrap build is managed from local state file and the rest is stored in remote S3
@@ -54,9 +97,9 @@ terraform init -reconfigure \
 terraform plan
 terraform apply
 
-# Cluster Deploy may take about 10-15 minutes to fully deploy
+# Cluster Deployment takes about 10-15 minutes to fully deploy
 ```
-- Verify Cluster is up
+- Verify the Cluster is up
 ```
 aws eks update-kubeconfig \
   --name pokemon-game-eks \
@@ -142,7 +185,7 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.pas
     - `Commit` and `push` to GitHub Repository
     - CI will pick up and run `Unit` and `Runtime` tests via `Docker Compose`, `Bandit(SAST)` scan, `Build`, `Tag`(name-date-time-sha), `Push` to DockerHub and `commit back` to the Repository with `[skip-ci]` flag
     - `ArgoCD` will detect changes (default autosync every 3 minutes) and deploy the new images to the cluster using the default rolling deployment strategy
-    - In this Project `Rollbacks` are possible manually via `deactivating autosync` and the `ArgoCD rollback feature` or using Git Revert and pushing the change to main
+    - In this Project `Rollbacks` are possible manually by `deactivating autosync` and the `ArgoCD rollback feature` or using Git Revert and pushing the change to main
 ## Clean Up
 - Destroy Monitoring build
 ```

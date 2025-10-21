@@ -2,9 +2,9 @@
 ![EKS Pods Running](./media/ekspods.png)
 - ### Frontend
 ![Frontend](./media/frontend.png)
-- ### Pod using ClusterIP
+- ### Pods using ClusterIP
 ![Pod to Pod](./media/servicesforpods.png)
-- ### Frontend Ingress
+- ### Frontend Ingress and Endpoint
 ![Frontend as single point of entry](./media/frontendingress.png)
 ![Frontend as single point of entry](./media/frontendendpoint.png)
 - ### CloudWatch Dashboard
@@ -14,5 +14,5 @@
 ![Logs](./media/cloudwatchlogsgroups.png)
 - ### ArgoCD Dashboard
 ![ArgoCD](./media/argocddashboard.png)
-- ### ArgoCD Dashboard auto-syncing
+- ### ArgoCD Dashboard auto-syncing on change
 ![ArgoCD sync](./media/syncinprogress.png)
