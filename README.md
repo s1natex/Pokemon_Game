@@ -3,11 +3,11 @@
 - ### [Project Screenshots](./docs/screenshots.md)
 ## Project Overview
 - `Application`:
-    - Each service runs as an independent containerized Deployment with a dedicated Service and Horizontal Pod Autoscaler
+    - Each service runs as an independent container with a dedicated Service and Horizontal Pod Autoscaler
     - The frontend is exposed publicly via an Application Load Balancer
     - Backend services remain internal in private subnets
     - Services communicate over REST APIs through the internal VPC network
-    - The app namespace uses its own Fargate profile and service account for isolation and observability integration
+    - The app namespace uses a Fargate profile and service account for isolation and observability
 - `Infrastructure & Networking`:
     - The infrastructure is built entirely with Terraform using a remote S3 backend and DynamoDB locking
     - VPC spans three Availability Zones (AZ-a, AZ-b, AZ-c) with public and private subnets per AZ
@@ -28,20 +28,20 @@
     - A separate ALB ingress provides external access to the ArgoCD web UI
     - The ArgoCD controller has a cluster-admin role binding limited to the argocd namespace
 - `CI Pipeline`:
-    - On commits to main, the workflow runs pytest-based unit and runtime tests, and SAST security scans using Bandit
+    - On commit, the workflow runs pytest unit and runtime tests, and SAST security scans using Bandit
     - Each service is containerized and tagged dynamically (`SERVICE-DATE-TIME-SHA`), and pushed to DockerHub
-    - The workflow then commits updated image tags to the repository with a `[skip-ci]` flag triggering ArgoCD autosync for deployment
+    - The workflow commits updated image tags to the repository with a `[skip-ci]` flag triggering ArgoCD autosync
 - `Observability & Monitoring`:
     - CloudWatch provides centralized monitoring and logging
-    - All EKS Fargate pods stream logs to CloudWatch Logs (`/eks/pokemon-game/app`) via the `fargate-logs-write` IAM policy
+    - All EKS pods stream logs to CloudWatch Logs via the `fargate-logs-write` IAM policy
     - CloudWatch dashboard visualizes ALB metrics:
         - RequestCount
-        - TargetResponseTime 
-        - p50/p90/p99
-        - error tracking
+        - TargetResponseTime
+        - Error by service
+        - Recent error log lines
         - endpoint traffic
         - health checks
-- `Scripts & Automation`: Python automation scripts manage deployment, validation, monitoring, and teardown operations
+- `Scripts & Automation`: Python automation scripts manage deployment, validation, monitoring, and teardown
 ## Improvement
 - Add AWS SNS/SQS for the event-driven layer
 - Add autoscaling metrics and CloudWatch alarms for EKS scaling behavior
