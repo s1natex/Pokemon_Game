@@ -30,7 +30,7 @@
 - `CI Pipeline`:
     - On commit, the workflow runs pytest unit and runtime tests, and SAST security scans using Bandit
     - Each service is containerized and tagged dynamically (`SERVICE-DATE-TIME-SHA`), and pushed to DockerHub
-    - The workflow commits updated image tags to the repository with a `[skip-ci]` flag triggering ArgoCD autosync
+    - The workflow commits updated image tags to the repository with a `[skip-ci]` flag triggering ArgoCD
 - `Observability & Monitoring`:
     - CloudWatch provides centralized monitoring and logging
     - All EKS pods stream logs to CloudWatch Logs via the `fargate-logs-write` IAM policy
